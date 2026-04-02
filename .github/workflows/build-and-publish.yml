@@ -121,13 +121,17 @@ jobs:
             curl --fail --show-error --silent --location --retry 3 --retry-delay 2 --retry-all-errors "$@"
           }
 
+          response_looks_invalid() {
+            head -n 5 "$1" | grep -Eiq '^(429([[:space:]:]|$)|<!DOCTYPE html|<html)|Too Many Requests'
+          }
+
           fetch_plain_list() {
             local url="$1"
             local dest="$2"
             local tmp
             tmp=$(mktemp)
             curl_retry "$url" -o "$tmp"
-            if grep -Eiq '^(429|<!DOCTYPE html|<html)|Too Many Requests' "$tmp"; then
+            if response_looks_invalid "$tmp"; then
               echo "::error::Unexpected response while fetching ${url}"
               head -n 5 "$tmp"
               return 1
@@ -141,7 +145,7 @@ jobs:
             local tmp
             tmp=$(mktemp)
             curl_retry "$url" -o "$tmp"
-            if grep -Eiq '^(429|<!DOCTYPE html|<html)|Too Many Requests' "$tmp"; then
+            if response_looks_invalid "$tmp"; then
               echo "::error::Unexpected response while fetching ${url}"
               head -n 5 "$tmp"
               return 1
@@ -171,7 +175,7 @@ jobs:
           cd custom
           echo ipleak.net >> ../community/data/geolocation-\!cn && echo browserleaks.org >> ../community/data/geolocation-\!cn
           for file in ../community/data/*; do
-            if grep -Eiq '^(429|<!DOCTYPE html|<html)|Too Many Requests' "$file"; then
+            if head -n 5 "$file" | grep -Eiq '^(429([[:space:]:]|$)|<!DOCTYPE html|<html)|Too Many Requests'; then
               echo "::error file=${file}::Unexpected upstream response detected in ruleset input"
               head -n 5 "$file"
               exit 1
