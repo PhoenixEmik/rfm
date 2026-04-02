@@ -117,17 +117,50 @@ jobs:
         env:
           SED: sed '/^\s*#/d' | sed 's/DOMAIN,//g' | sed 's/DOMAIN-SUFFIX,//g' | sed 's/DOMAIN-KEYWORD,/keyword:/g'
         run: |
+          curl_retry() {
+            curl --fail --show-error --silent --location --retry 3 --retry-delay 2 --retry-all-errors "$@"
+          }
+
+          fetch_plain_list() {
+            local url="$1"
+            local dest="$2"
+            local tmp
+            tmp=$(mktemp)
+            curl_retry "$url" -o "$tmp"
+            if grep -Eiq '^(429|<!DOCTYPE html|<html)|Too Many Requests' "$tmp"; then
+              echo "::error::Unexpected response while fetching ${url}"
+              head -n 5 "$tmp"
+              return 1
+            fi
+            mv "$tmp" "$dest"
+          }
+
+          fetch_transformed_list() {
+            local url="$1"
+            local dest="$2"
+            local tmp
+            tmp=$(mktemp)
+            curl_retry "$url" -o "$tmp"
+            if grep -Eiq '^(429|<!DOCTYPE html|<html)|Too Many Requests' "$tmp"; then
+              echo "::error::Unexpected response while fetching ${url}"
+              head -n 5 "$tmp"
+              return 1
+            fi
+            cat "$tmp" | ${{ env.SED }} > "$dest"
+            rm -f "$tmp"
+          }
+
           # Merge SteamCN list
-          curl -sSL https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/SteamCN/SteamCN.list | ${{ env.SED }} > steamcn.txt
+          fetch_transformed_list https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/SteamCN/SteamCN.list steamcn.txt
           while read line; do grep -q "$line @cn" ./community/data/steam || sed -i "/$line/ s/$/ @cn/" ./community/data/steam; done < steamcn.txt
           # Merge other lists
-          curl -sSL https://raw.githubusercontent.com/xishang0128/rules/main/biliintl.list > ./community/data/biliintl
-          curl -sSL https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/OneDrive/OneDrive.list | ${{ env.SED }} > ./community/data/onedrive
+          fetch_plain_list https://raw.githubusercontent.com/xishang0128/rules/main/biliintl.list ./community/data/biliintl
+          fetch_transformed_list https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/OneDrive/OneDrive.list ./community/data/onedrive
           echo "sharepoint.cn" >> ./community/data/onedrive 
-          curl -sSL https://raw.githubusercontent.com/xishang0128/rules/main/sharepoint.list > ./community/data/sharepoint
-          curl -sSL https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/PrivateTracker/PrivateTracker.list | ${{ env.SED }} > ./community/data/tracker
-          curl -sSL https://raw.githubusercontent.com/XIU2/TrackersListCollection/refs/heads/master/all.txt | grep -i "\.[A-Z]" | grep -v tracker | sed 's/^.*\/\///g' | sed 's/:.*\/.*//g' >> ./community/data/tracker
-          curl -sSL https://github.com/blackmatrix7/ios_rule_script/raw/master/rule/Clash/BlockHttpDNS/BlockHttpDNS.list | ${{ env.SED }} > ./community/data/httpdns
+          fetch_plain_list https://raw.githubusercontent.com/xishang0128/rules/main/sharepoint.list ./community/data/sharepoint
+          fetch_transformed_list https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/PrivateTracker/PrivateTracker.list ./community/data/tracker
+          curl_retry https://raw.githubusercontent.com/XIU2/TrackersListCollection/refs/heads/master/all.txt | grep -i "\.[A-Z]" | grep -v tracker | sed 's/^.*\/\///g' | sed 's/:.*\/.*//g' >> ./community/data/tracker
+          fetch_transformed_list https://github.com/blackmatrix7/ios_rule_script/raw/master/rule/Clash/BlockHttpDNS/BlockHttpDNS.list ./community/data/httpdns
 
       - name: Supplement lists
         run: |
@@ -137,6 +170,13 @@ jobs:
         run: |
           cd custom
           echo ipleak.net >> ../community/data/geolocation-\!cn && echo browserleaks.org >> ../community/data/geolocation-\!cn
+          for file in ../community/data/*; do
+            if grep -Eiq '^(429|<!DOCTYPE html|<html)|Too Many Requests' "$file"; then
+              echo "::error file=${file}::Unexpected upstream response detected in ruleset input"
+              head -n 5 "$file"
+              exit 1
+            fi
+          done
           go run ./ --datapath=../community/data
           cd ../converter
           mkdir -p ../converted
